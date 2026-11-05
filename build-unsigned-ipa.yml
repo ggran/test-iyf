@@ -1,0 +1,63 @@
+name: Build unsigned IPA (no Mac)
+
+# 手动触发：在仓库 Actions 页选本工作流 -> Run workflow。
+# 产物是未签名 .ipa，不能直接装机；需在 Windows 上用 SideStore/AltStore
+# 以你自己的 Apple ID 重签名后侧载（见仓库根 README「没有 Mac（Windows）」一节）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-unsigned:
+    name: Build unsigned .app for iOS device
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode and SDK versions
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Build for generic iOS device (no code signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project KubbTV/KubbTV.xcodeproj \
+            -scheme KubbTV \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package .app into unsigned .ipa
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/KubbTV.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::KubbTV.app not found at $APP_PATH"
+            find "$RUNNER_TEMP/DerivedData/Build/Products" -maxdepth 2 -print || true
+            exit 1
+          fi
+          # .ipa 本质是含 Payload/<App>.app 的 zip；未签名，装机前由侧载工具重签。
+          rm -rf Payload KubbTV-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -qry KubbTV-unsigned.ipa Payload
+          /usr/bin/unzip -l KubbTV-unsigned.ipa | head -30
+
+      - name: Upload unsigned .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KubbTV-unsigned-ipa
+          path: KubbTV-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
